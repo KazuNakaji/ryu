@@ -123,28 +123,24 @@ class SimpleSwitch13(app_manager.RyuApp):
         # 2port mac transralate
         # first , avoid translation broadcast or multicast packet
         if int(dst.split(':', 5)[0], 16) % 2 != 1:
-
             if out_port == PTS_port_1:
                 match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
                 actions = [parser.OFPActionSetField(eth_dst=src), parser.OFPActionSetField(eth_src=dst),
                             parser.OFPActionSetField(vlan_vid=VID_PTS_port_1), parser.OFPActionOutput(out_port)]
                 self.add_flow(datapath, 1, match, actions, msg.buffer_id)
                 return
-
             if out_port == PTS_port_2:
                 match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
                 actions = [parser.OFPActionSetField(eth_dst=src), parser.OFPActionSetField(eth_src=dst),
                             parser.OFPActionSetField(vlan_vid=VID_PTS_port_2), parser.OFPActionOutput(out_port)]
                 self.add_flow(datapath, 1, match, actions, msg.buffer_id)
                 return
-
         else:
             if out_port == PTS_port_1:
                 match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
                 actions = [parser.OFPActionSetField(vlan_vid=VID_PTS_port_1), parser.OFPActionOutput(out_port)]
                 self.add_flow(datapath, 1, match, actions, msg.buffer_id)
                 return
-
             if out_port == PTS_port_2:
                 match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
                 actions = [parser.OFPActionSetField(vlan_vid=VID_PTS_port_2), parser.OFPActionOutput(out_port)]
