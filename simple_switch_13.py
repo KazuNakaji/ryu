@@ -53,7 +53,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         parser = datapath.ofproto_parser
 
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
-                                             actions)]
+                                             actions,)]
         if buffer_id:
             mod = parser.OFPFlowMod(datapath=datapath, buffer_id=buffer_id,
                                     priority=priority, match=match,
@@ -76,44 +76,95 @@ class SimpleSwitch13(app_manager.RyuApp):
         parser = datapath.ofproto_parser
         in_port = msg.match['in_port']
 
+        #Input PTS Information#########################
+        #want mac translation port
+        PTS_port_1 = 15
+        PTS_port_2 = 16
+        PTS_pair_port_1 = 3
+        PTS_pair_port_2 = 4
+
+        #sttach PTS port VLAN tag
+        VID_PTS_port_1 = 510
+        VID_PTS_port_2 = 520
+        ###############################################
+
+        #switch pair port
+        pair_port_list_1 = [PTS_port_1, PTS_port_2, PTS_pair_port_1, PTS_pair_port_2]
+        pair_port_list_2 = [PTS_pair_port_1, PTS_pair_port_2, PTS_port_1, PTS_port_2]
+
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
 
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
-            # ignore lldp packet
+        # ignore lldp packet
             return
+
         dst = eth.dst
         src = eth.src
 
         dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
 
-        self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
+        #port pair detection
+        if in_port in pair_port_list_1:
+            out_port = pair_port_list_2[pair_port_list_1.index(in_port)]
+
+        actions = [parser.OFPActionOutput(out_port)]
 
         # learn a mac address to avoid FLOOD next time.
         self.mac_to_port[dpid][src] = in_port
 
-        if dst in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][dst]
-        else:
-            out_port = ofproto.OFPP_FLOOD
-
-        actions = [parser.OFPActionOutput(out_port)]
-
-        # install a flow to avoid packet_in next time
-        if out_port != ofproto.OFPP_FLOOD:
+        if in_port == PTS_port_1 or in_port == PTS_port_2:
             match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
-            # verify if we have a valid buffer_id, if yes avoid to send both
-            # flow_mod & packet_out
-            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+            actions = [parser.OFPActionPopVlan(), parser.OFPActionOutput(out_port)]
+            self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+            return
+
+        # 2port mac transralate
+        # first , avoid translation broadcast or multicast packet
+        if int(dst.split(':', 5)[0], 16) % 2 != 1:
+
+            if out_port == PTS_port_1:
+                match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
+                actions = [parser.OFPActionSetField(eth_dst=src), parser.OFPActionSetField(eth_src=dst),
+                            parser.OFPActionSetField(vlan_vid=VID_PTS_port_1), parser.OFPActionOutput(out_port)]
                 self.add_flow(datapath, 1, match, actions, msg.buffer_id)
                 return
-            else:
-                self.add_flow(datapath, 1, match, actions)
+
+            if out_port == PTS_port_2:
+                match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
+                actions = [parser.OFPActionSetField(eth_dst=src), parser.OFPActionSetField(eth_src=dst),
+                            parser.OFPActionSetField(vlan_vid=VID_PTS_port_2), parser.OFPActionOutput(out_port)]
+                self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+                return
+
+        else:
+            if out_port == PTS_port_1:
+                match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
+                actions = [parser.OFPActionSetField(vlan_vid=VID_PTS_port_1), parser.OFPActionOutput(out_port)]
+                self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+                return
+
+            if out_port == PTS_port_2:
+                match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
+                actions = [parser.OFPActionSetField(vlan_vid=VID_PTS_port_2), parser.OFPActionOutput(out_port)]
+                self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+                return
+
+        # install a flow to avoid packet_in next time
+        match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
+
+        # verify if we have a valid buffer_id, if yes avoid to send both
+        # flow_mod & packet_out
+        if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+            self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+            return
+        else:
+            self.add_flow(datapath, 1, match, actions)
+
         data = None
+
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
-
-        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                                  in_port=in_port, actions=actions, data=data)
+        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id, in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
